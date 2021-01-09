@@ -1,138 +1,129 @@
 #include"MemoryPool.h"
+#include <assert.h>
 
-#define chunk 1024
-#define block 4
-
+const int MemBlockSize[blocktypes] = {8, 16, 32, 64, 128, 256};
 static MemoryPool MemPool;
 
 /*****************************************************
 @入参：实际申请内存的大小
-@出参：内存池分配内存块的类型
-@说明：
-*****************************************************/
-int GetType(int size)
-{
-    if(size<=2)
-    {
-        return -1;      
-    }
-    else
-    {
-        return GetType(size/2)+1;
-    }   
-}
-
-/*****************************************************
-@入参：实际申请内存的大小
 @出参：返回申请内存的指针
-@说明：对于大于128字节的内存申请采用malloc()
+@说明：对于大于MemBlockSize[block256]字节的内存申请采用malloc()
 *****************************************************/
-void* MyMalloc(int size)
+void* MyMalloc(unsigned int size)
 {
     int UnitType;
-    int MemBlockSize[6] = {size_4, size_8, size_16, size_32, size_64, size_128};
-    if(size > size_128)
+    if(size > MemBlockSize[block256])
     {
-        int* p = (int*)malloc(size+block);
+        int* p = (int*)malloc(size + Recordblock);
         *p = size;
         return p+1;
     }
-    else if (size<=2)
+    for(UnitType = block8; UnitType < blocktypes ; UnitType++)
     {
-        UnitType = GetType(size+2);
+        if(UnitType == block8)
+        {
+            if(size <= MemBlockSize[UnitType])
+                break;
+        }
+        else
+        {
+            if((MemBlockSize[UnitType-1] < size) && (size <= MemBlockSize[UnitType]))
+                break;
+        }
     }
-    else
-    {
-        UnitType = GetType(size);
-    }
-    return MemPool.Malloc(MemBlockSize[UnitType], UnitType);
+    return MemPool.Malloc(UnitType);
 }
 
 /*****************************************************
 @入参：释放指针指向的内存
 @出参：
-@说明：头部4个字节记录内存的大小
+@说明：头部Recordblock记录内存的大小
 *****************************************************/
 void MyFree(void* ptr)
 {
-    int* size = (int*)((char*)ptr - block);
-    if((*size) > 128)
+    int* size = (int*)((char*)ptr - Recordblock);
+    if((*size) > MemBlockSize[block256])
     {
-        free(size);
+        free(((char*)ptr-Recordblock));
     }
     else
     {
-        MemPool.Free(ptr, GetType(*size));
+        int UnitType;
+        for(UnitType = block8; UnitType < blocktypes ; UnitType++)
+        {
+            if(UnitType == block8)
+            {
+                if((*size) <= MemBlockSize[UnitType])
+                    break;
+            }
+            else
+            {
+                if((MemBlockSize[UnitType-1] < (*size)) && ((*size) <= MemBlockSize[UnitType]))
+                    break;
+            }
+        }
+        MemPool.Free(ptr, UnitType);
     }
 }
 
 /*****************************************************
 @入参：
 @出参：
-@说明：初始化6个1024字节的内存块，每个分别按照4、8、16、32、64、128的固定大小分配内存
+@说明：初始化blocktypes个chunk字节的内存块，分别按照8、16、32、64、128、256的固定大小分配内存
 *****************************************************/
 MemoryPool::MemoryPool()
 {
-    for(int i=0; i<6 ;i++)
+    for(int i=0; i<blocktypes ;i++)
     {
         Head_MemoryPool[i] = (char*)malloc(chunk);
         if(Head_MemoryPool[i] == NULL)
         {
             printf("MemoryPool initial failed!\n");
-            return;
+            assert(Head_MemoryPool[i]);
         }
         Head_FreeList[i] = NULL;
-        Head_FreeMem[i] = (Node*)Head_MemoryPool;
-        Head_FreeMem[i]->size = chunk;
-        Head_FreeMem[i]->next = NULL;
+        Head_FreeMem[i].size = chunk;
+        Head_FreeMem[i].next = (Node*)Head_MemoryPool[i];
     }
 }
 
 /*****************************************************
 @入参：申请内存块的类型
 @出参：
-@说明：向内存池申请指定大小内存，如果内存不足则扩展内存
+@说明：向内存池申请指定大小内存
 *****************************************************/
-void* MemoryPool::Malloc(int size, const int& UnitType)
+void* MemoryPool::Malloc(const int& UnitType)
 {
-    Node* Mem;
-    int MemLen = size + block;
-    if(Head_FreeList == NULL)
+    //检查空闲链表是否为空
+    if(Head_FreeList[UnitType] != NULL)
     {
-        int capacity = Head_FreeMem[UnitType]->size - 2*block;
+        Head_FreeList[UnitType] = Head_FreeList[UnitType]->next;
+        return &(Head_FreeList[UnitType]->next);      
+    }
+    else
+    {
+        Node* Mem;
+        int MemLen = MemBlockSize[UnitType] + Recordblock;
+        int capacity = Head_FreeMem[UnitType].size - sizeofptr;
+        //如果内存块空间不足，则申请新的内存块
         if(capacity < MemLen)
         {
-            ExtendMemory(UnitType);
+            char** nextchunk = (char**)((char*)Head_FreeMem[UnitType].next + capacity);
+            (*nextchunk) = (char*)malloc(chunk);
+            if((*nextchunk) == NULL)
+            {
+                printf("Get NextChunk failed!\n");
+                assert(*nextchunk); 
+            }
+            Head_FreeMem[UnitType].next = (Node*)(*nextchunk);
+            Head_FreeMem[UnitType].size = chunk;
         }
-        Mem = Head_FreeMem[UnitType];
-        Head_FreeMem[UnitType]->size = Head_FreeMem[UnitType]->size - MemLen ;
-        memcpy((char*)Head_FreeMem[UnitType] + MemLen, (char*)Head_FreeMem[UnitType], (2*block));
-        Head_FreeMem[UnitType] = (Node*)((char*)Head_FreeMem[UnitType] + MemLen);
-        Mem->size = size;
-        return &(Mem->next);       
+        Mem = Head_FreeMem[UnitType].next;
+        Head_FreeMem[UnitType].size = Head_FreeMem[UnitType].size - MemLen ;
+        Head_FreeMem[UnitType].next = (Node*)((char*)Head_FreeMem[UnitType].next + MemLen);
+        Mem->size = MemBlockSize[UnitType];
+        return &(Mem->next); 
     }
-    Head_FreeList[UnitType] = Head_FreeList[UnitType]->next;
-    return &(Head_FreeList[UnitType]->next);
-}
-
-/*****************************************************
-@入参：内存块的类型
-@出参：
-@说明：扩展1024字节的内存
-*****************************************************/
-void* MemoryPool::ExtendMemory(const int& UnitType)
-{
-    int offset = Head_FreeMem[UnitType]->size - block;
-    char** NextChunk;
-    NextChunk = (char**)((char*)Head_FreeMem[UnitType] + offset);
-    *NextChunk = (char*)malloc(chunk);
-    if(*NextChunk == NULL)
-    {
-        printf("Get NextChunk failed!\n");
-        return NULL; 
-    }
-    memcpy(*NextChunk, Head_FreeMem[UnitType], 8);
-    Head_FreeMem[UnitType]->size = chunk;
 }
 
 /*****************************************************
@@ -142,7 +133,7 @@ void* MemoryPool::ExtendMemory(const int& UnitType)
 *****************************************************/
 void MemoryPool::Free(void* ptr, const int& UnitType)
 {
-    Node* p = (Node*)((char*)ptr - block);
+    Node* p = (Node*)((char*)ptr - Recordblock);
     p->next = Head_FreeList[UnitType];
     Head_FreeList[UnitType] = p;
 }
