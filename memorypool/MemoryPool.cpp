@@ -1,5 +1,6 @@
 #include"MemoryPool.h"
 #include <assert.h>
+#include <iostream>
 
 const int MemBlockSize[blocktypes] = {8, 16, 32, 64, 128, 256};
 static MemoryPool MemPool;
@@ -14,7 +15,7 @@ void* MyMalloc(unsigned int size)
     int UnitType;
     if(size > MemBlockSize[block256])
     {
-        int* p = (int*)malloc(size + Recordblock);
+        int* p = (int*)mmap(NULL, size + Recordblock, PROT_WRITE|PROT_READ, MAP_PRIVATE|MAP_ANON, 0, 0);
         *p = size;
         return p+1;
     }
@@ -44,7 +45,7 @@ void MyFree(void* ptr)
     int* size = (int*)((char*)ptr - Recordblock);
     if((*size) > MemBlockSize[block256])
     {
-        free(((char*)ptr-Recordblock));
+        munmap(((char*)ptr-Recordblock),(*size));
     }
     else
     {
@@ -109,7 +110,7 @@ void* MemoryPool::Malloc(const int& UnitType)
         if(capacity < MemLen)
         {
             char** nextchunk = (char**)((char*)Head_FreeMem[UnitType].next + capacity);
-            (*nextchunk) = (char*)malloc(chunk);
+            (*nextchunk) = (char*)mmap(NULL, chunk, PROT_WRITE|PROT_READ, MAP_PRIVATE|MAP_ANON, 0, 0);
             if((*nextchunk) == NULL)
             {
                 printf("Get NextChunk failed!\n");

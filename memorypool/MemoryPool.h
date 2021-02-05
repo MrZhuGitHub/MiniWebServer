@@ -7,7 +7,8 @@
 但是存在内存碎片的问题。此外对内存的分配和释放过程进行了加锁，
 可以保证线程的安全性。
 *****************************************************/
-#include<malloc.h>
+#include<unistd.h>
+#include<sys/mman.h>
 #include<string.h>
 
 #pragma pack(4)
